@@ -22,8 +22,8 @@ class NodeConfig:
     name: str
     host: str
     user: str
-    port: int = 22
     vms: dict[str, int]
+    port: int = 22
 
 
 @dataclass(frozen=True)

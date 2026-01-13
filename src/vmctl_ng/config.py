@@ -22,6 +22,7 @@ class NodeConfig:
     name: str
     host: str
     user: str
+    port: int = 22
     vms: dict[str, int]
 
 
@@ -53,6 +54,14 @@ def _require_vms(value: Any, label: str) -> dict[str, int]:
             raise ConfigError(f"VM id for '{name}' must be an integer")
         normalized[name] = vmid
     return normalized
+
+
+def _require_port(value: Any, label: str) -> int:
+    if value is None:
+        return 22
+    if not isinstance(value, int):
+        raise ConfigError(f"{label} must be an integer")
+    return value
 
 
 def find_config_path(override: str | None) -> Path:
@@ -92,9 +101,10 @@ def load_config(path: Path) -> Config:
         node_map = _require_mapping(node_data, f"nodes.{node_name}")
         host = _require_str(node_map.get("host"), f"nodes.{node_name}.host")
         user = _require_str(node_map.get("user"), f"nodes.{node_name}.user")
+        port = _require_port(node_map.get("port"), f"nodes.{node_name}.port")
         vms = _require_vms(node_map.get("vms"), f"nodes.{node_name}.vms")
 
-        node_cfg = NodeConfig(name=node_name, host=host, user=user, vms=vms)
+        node_cfg = NodeConfig(name=node_name, host=host, user=user, port=port, vms=vms)
         nodes[node_name] = node_cfg
 
         for vm_name, vmid in vms.items():

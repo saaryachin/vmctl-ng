@@ -32,12 +32,13 @@ nodes:
   rook:
     host: 172.16.1.150
     user: saar
+    port: 53433
     vms:
       jumpingrook: 110
       portcullis: 120
 ```
 
-VM names must be unique across all nodes.
+VM names must be unique across all nodes. The `port` field is optional and defaults to 22.
 
 ## SSH + sudo behavior
 

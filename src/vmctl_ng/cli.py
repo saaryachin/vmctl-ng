@@ -30,10 +30,10 @@ def _is_sudo_password_required(output: str) -> bool:
     return "sudo" in lower and "password" in lower and "required" in lower
 
 
-def _run_ssh_qm(host: str, user: str, qm_args: str) -> subprocess.CompletedProcess[str]:
+def _run_ssh_qm(host: str, user: str, port: int, qm_args: str) -> subprocess.CompletedProcess[str]:
     remote_cmd = f"sudo -n qm {qm_args}"
     return subprocess.run(
-        ["ssh", f"{user}@{host}", remote_cmd],
+        ["ssh", "-p", str(port), f"{user}@{host}", remote_cmd],
         capture_output=True,
         text=True,
     )
@@ -57,7 +57,7 @@ def _handle_vm_action(args: argparse.Namespace) -> int:
 
     node_name, vmid = vm
     node = config.nodes[node_name]
-    result = _run_ssh_qm(node.host, node.user, f"{args.action} {vmid}")
+    result = _run_ssh_qm(node.host, node.user, node.port, f"{args.action} {vmid}")
     combined = (result.stdout or "") + (result.stderr or "")
 
     if result.returncode == 0:
@@ -80,7 +80,7 @@ def _handle_node_qm_list(args: argparse.Namespace) -> int:
         _print_error(f"Unknown node: {args.node}")
         return EXIT_NOT_FOUND
 
-    result = _run_ssh_qm(node.host, node.user, "list")
+    result = _run_ssh_qm(node.host, node.user, node.port, "list")
     combined = (result.stdout or "") + (result.stderr or "")
 
     if result.returncode == 0:

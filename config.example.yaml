@@ -2,6 +2,7 @@ nodes:
   proxmoxsrv1:
     host: 192.168.1.100
     user: admin
+    port: 53433
     vms:
       webserver: 110
       fileserver: 120

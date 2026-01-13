@@ -1,7 +1,7 @@
 nodes:
-  rook:
-    host: 172.16.1.150
-    user: saar
+  proxmoxsrv1:
+    host: 192.168.1.100
+    user: admin
     vms:
-      jumpingrook: 110
-      portcullis: 120
+      webserver: 110
+      fileserver: 120

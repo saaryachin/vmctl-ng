@@ -48,7 +48,7 @@ Commands run as:
 ssh <user>@<host> "sudo -n qm <action> <vmid>"
 ```
 
-If `sudo -n` fails because a password is required, vmctl-ng exits with a clear error. Configure passwordless sudo for the `qm` command.
+If `sudo -n` fails because a password is required, vmctl-ng prompts once for the sudo password by default and retries with `sudo -S`. Use `--no-askpass` to keep strict behavior and exit with an error instead.
 
 ## Manual test examples
 

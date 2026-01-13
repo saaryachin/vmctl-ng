@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
+from getpass import getpass
 from pathlib import Path
 
 from .config import ConfigError, find_config_path, load_config
@@ -30,12 +31,20 @@ def _is_sudo_password_required(output: str) -> bool:
     return "sudo" in lower and "password" in lower and "required" in lower
 
 
-def _run_ssh_qm(host: str, user: str, port: int, qm_args: str) -> subprocess.CompletedProcess[str]:
-    remote_cmd = f"sudo -n qm {qm_args}"
+def _run_ssh_qm(
+    host: str,
+    user: str,
+    port: int,
+    qm_args: str,
+    sudo_flags: str = "-n",
+    input_text: str | None = None,
+) -> subprocess.CompletedProcess[str]:
+    remote_cmd = f"sudo {sudo_flags} qm {qm_args}"
     return subprocess.run(
         ["ssh", "-p", str(port), f"{user}@{host}", remote_cmd],
         capture_output=True,
         text=True,
+        input=input_text,
     )
 
 
@@ -66,8 +75,26 @@ def _handle_vm_action(args: argparse.Namespace) -> int:
         return 0
 
     if _is_sudo_password_required(combined):
-        _print_error(_sudo_required_message(node_name, node.host))
-        return EXIT_SUDO
+        if not args.askpass:
+            _print_error(_sudo_required_message(node_name, node.host))
+            return EXIT_SUDO
+        password = getpass(f"Password for sudo on node '{node_name}' ({node.host}): ")
+        retry = _run_ssh_qm(
+            node.host,
+            node.user,
+            node.port,
+            f"{args.action} {vmid}",
+            sudo_flags="-S -p ''",
+            input_text=f"{password}\n",
+        )
+        password = ""
+        retry_output = (retry.stdout or "") + (retry.stderr or "")
+        if retry.returncode == 0:
+            if retry.stdout:
+                print(retry.stdout, end="")
+            return 0
+        _print_error(retry_output.strip() or "Remote command failed")
+        return EXIT_REMOTE
 
     _print_error(combined.strip() or "Remote command failed")
     return EXIT_REMOTE
@@ -89,8 +116,26 @@ def _handle_node_qm_list(args: argparse.Namespace) -> int:
         return 0
 
     if _is_sudo_password_required(combined):
-        _print_error(_sudo_required_message(args.node, node.host))
-        return EXIT_SUDO
+        if not args.askpass:
+            _print_error(_sudo_required_message(args.node, node.host))
+            return EXIT_SUDO
+        password = getpass(f"Password for sudo on node '{args.node}' ({node.host}): ")
+        retry = _run_ssh_qm(
+            node.host,
+            node.user,
+            node.port,
+            "list",
+            sudo_flags="-S -p ''",
+            input_text=f"{password}\n",
+        )
+        password = ""
+        retry_output = (retry.stdout or "") + (retry.stderr or "")
+        if retry.returncode == 0:
+            if retry.stdout:
+                print(retry.stdout, end="")
+            return 0
+        _print_error(retry_output.strip() or "Remote command failed")
+        return EXIT_REMOTE
 
     _print_error(combined.strip() or "Remote command failed")
     return EXIT_REMOTE
@@ -110,6 +155,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--config",
         help="Path to config file (default: ./vmctl.yaml or ~/.config/vmctl-ng/config.yaml)",
+    )
+    parser.add_argument(
+        "--askpass",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Prompt for sudo password if needed (default: enabled)",
     )
 
     subparsers = parser.add_subparsers(dest="command", required=True)

@@ -1,0 +1,7 @@
+nodes:
+  rook:
+    host: 172.16.1.150
+    user: saar
+    vms:
+      jumpingrook: 110
+      portcullis: 120

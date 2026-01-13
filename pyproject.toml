@@ -1,0 +1,24 @@
+[project]
+name = "vmctl-ng"
+version = "0.1.0"
+description = "CLI to control Proxmox VMs via SSH"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [{name = "saar"}]
+dependencies = [
+  "PyYAML>=6.0",
+]
+
+[project.scripts]
+vmctl = "vmctl_ng.cli:main"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

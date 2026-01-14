@@ -1,6 +1,6 @@
 # vmctl-ng
 
-Minimal CLI for controlling Proxmox VMs via SSH from a jumpserver.
+Minimal CLI for controlling Proxmox VMs via SSH from a jumpserver, with guest listing across VMs and LXCs.
 
 ## Install
 
@@ -14,7 +14,7 @@ python -m pip install -e .
 vmctl --config /path/to/config.yaml start jumpingrook
 vmctl stop jumpingrook
 vmctl status jumpingrook
-vmctl node qm-list rook
+vmctl list
 vmctl vm list
 ```
 
@@ -48,6 +48,13 @@ Commands run as:
 ssh <user>@<host> "sudo -n qm <action> <vmid>"
 ```
 
+Listing guests runs:
+
+```text
+ssh <user>@<host> "sudo -n qm list"
+ssh <user>@<host> "sudo -n pct list"
+```
+
 If `sudo -n` fails because a password is required, vmctl-ng prompts once for the sudo password by default and retries with `sudo -S`. Use `--no-askpass` to keep strict behavior and exit with an error instead.
 
 ## Manual test examples
@@ -55,4 +62,5 @@ If `sudo -n` fails because a password is required, vmctl-ng prompts once for the
 ```bash
 vmctl vm list
 vmctl status jumpingrook
+vmctl list --node rook --running
 ```

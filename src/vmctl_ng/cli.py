@@ -4,7 +4,6 @@ import argparse
 import subprocess
 import sys
 from getpass import getpass
-from pathlib import Path
 
 from .config import ConfigError, find_config_path, load_config
 
@@ -19,10 +18,10 @@ def _print_error(message: str) -> None:
     print(f"error: {message}", file=sys.stderr)
 
 
-def _sudo_required_message(node_name: str, host: str) -> str:
+def _sudo_required_message(command_label: str, node_name: str, host: str) -> str:
     return (
-        "sudo password is required for qm commands. "
-        f"Configure passwordless sudo for qm on node '{node_name}' ({host})."
+        f"sudo password is required for {command_label} commands. "
+        f"Configure passwordless sudo for {command_label} on node '{node_name}' ({host})."
     )
 
 
@@ -31,15 +30,15 @@ def _is_sudo_password_required(output: str) -> bool:
     return "sudo" in lower and "password" in lower and "required" in lower
 
 
-def _run_ssh_qm(
+def _run_ssh_sudo_command(
     host: str,
     user: str,
     port: int,
-    qm_args: str,
+    command: str,
     sudo_flags: str = "-n",
     input_text: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    remote_cmd = f"sudo {sudo_flags} qm {qm_args}"
+    remote_cmd = f"sudo {sudo_flags} {command}"
     return subprocess.run(
         ["ssh", "-p", str(port), f"{user}@{host}", remote_cmd],
         capture_output=True,
@@ -66,7 +65,12 @@ def _handle_vm_action(args: argparse.Namespace) -> int:
 
     node_name, vmid = vm
     node = config.nodes[node_name]
-    result = _run_ssh_qm(node.host, node.user, node.port, f"{args.action} {vmid}")
+    result = _run_ssh_sudo_command(
+        node.host,
+        node.user,
+        node.port,
+        f"qm {args.action} {vmid}",
+    )
     combined = (result.stdout or "") + (result.stderr or "")
 
     if result.returncode == 0:
@@ -76,14 +80,14 @@ def _handle_vm_action(args: argparse.Namespace) -> int:
 
     if _is_sudo_password_required(combined):
         if not args.askpass:
-            _print_error(_sudo_required_message(node_name, node.host))
+            _print_error(_sudo_required_message("qm", node_name, node.host))
             return EXIT_SUDO
         password = getpass(f"Password for sudo on node '{node_name}' ({node.host}): ")
-        retry = _run_ssh_qm(
+        retry = _run_ssh_sudo_command(
             node.host,
             node.user,
             node.port,
-            f"{args.action} {vmid}",
+            f"qm {args.action} {vmid}",
             sudo_flags="-S -p ''",
             input_text=f"{password}\n",
         )
@@ -100,45 +104,127 @@ def _handle_vm_action(args: argparse.Namespace) -> int:
     return EXIT_REMOTE
 
 
-def _handle_node_qm_list(args: argparse.Namespace) -> int:
-    config = _load_config_from_args(args)
-    node = config.nodes.get(args.node)
-    if not node:
-        _print_error(f"Unknown node: {args.node}")
-        return EXIT_NOT_FOUND
-
-    result = _run_ssh_qm(node.host, node.user, node.port, "list")
+def _run_remote_list_command(
+    args: argparse.Namespace,
+    node_name: str,
+    node,
+    command: str,
+    command_label: str,
+) -> tuple[int, str]:
+    result = _run_ssh_sudo_command(node.host, node.user, node.port, command)
     combined = (result.stdout or "") + (result.stderr or "")
 
     if result.returncode == 0:
-        if result.stdout:
-            print(result.stdout, end="")
-        return 0
+        return 0, result.stdout or ""
 
     if _is_sudo_password_required(combined):
         if not args.askpass:
-            _print_error(_sudo_required_message(args.node, node.host))
-            return EXIT_SUDO
-        password = getpass(f"Password for sudo on node '{args.node}' ({node.host}): ")
-        retry = _run_ssh_qm(
+            _print_error(_sudo_required_message(command_label, node_name, node.host))
+            return EXIT_SUDO, ""
+        password = getpass(f"Password for sudo on node '{node_name}' ({node.host}): ")
+        retry = _run_ssh_sudo_command(
             node.host,
             node.user,
             node.port,
-            "list",
+            command,
             sudo_flags="-S -p ''",
             input_text=f"{password}\n",
         )
         password = ""
         retry_output = (retry.stdout or "") + (retry.stderr or "")
         if retry.returncode == 0:
-            if retry.stdout:
-                print(retry.stdout, end="")
-            return 0
+            return 0, retry.stdout or ""
         _print_error(retry_output.strip() or "Remote command failed")
-        return EXIT_REMOTE
+        return EXIT_REMOTE, ""
 
     _print_error(combined.strip() or "Remote command failed")
-    return EXIT_REMOTE
+    return EXIT_REMOTE, ""
+
+
+def _parse_guest_table(output: str) -> list[tuple[int, str, str]]:
+    lines = [line for line in output.splitlines() if line.strip()]
+    if not lines:
+        return []
+    header = lines[0].split()
+    header_map = {name.upper(): idx for idx, name in enumerate(header)}
+
+    def _find_index(candidates: tuple[str, ...]) -> int | None:
+        for candidate in candidates:
+            if candidate in header_map:
+                return header_map[candidate]
+        return None
+
+    id_idx = _find_index(("VMID", "ID"))
+    name_idx = _find_index(("NAME",))
+    status_idx = _find_index(("STATUS",))
+    if id_idx is None or name_idx is None or status_idx is None:
+        return []
+
+    rows: list[tuple[int, str, str]] = []
+    max_idx = max(id_idx, name_idx, status_idx)
+    for line in lines[1:]:
+        parts = line.split()
+        if len(parts) <= max_idx:
+            continue
+        try:
+            vmid = int(parts[id_idx])
+        except ValueError:
+            continue
+        name = parts[name_idx]
+        status = parts[status_idx]
+        rows.append((vmid, name, status))
+    return rows
+
+
+def _handle_list(args: argparse.Namespace) -> int:
+    config = _load_config_from_args(args)
+    if args.node:
+        node = config.nodes.get(args.node)
+        if not node:
+            _print_error(f"Unknown node: {args.node}")
+            return EXIT_NOT_FOUND
+        nodes = {args.node: node}
+    else:
+        nodes = config.nodes
+
+    guests: list[tuple[str, int, str, str, str]] = []
+    for node_name in sorted(nodes):
+        node = nodes[node_name]
+        exit_code, qm_output = _run_remote_list_command(
+            args,
+            node_name,
+            node,
+            "qm list",
+            "qm",
+        )
+        if exit_code != 0:
+            return exit_code
+        for vmid, name, status in _parse_guest_table(qm_output):
+            guests.append((node_name, vmid, name, status, "VM"))
+
+        exit_code, pct_output = _run_remote_list_command(
+            args,
+            node_name,
+            node,
+            "pct list",
+            "pct",
+        )
+        if exit_code != 0:
+            return exit_code
+        for vmid, name, status in _parse_guest_table(pct_output):
+            guests.append((node_name, vmid, name, status, "LXC"))
+
+    if args.running:
+        guests = [guest for guest in guests if guest[3].lower() == "running"]
+    elif args.stopped:
+        guests = [guest for guest in guests if guest[3].lower() == "stopped"]
+
+    guests.sort(key=lambda guest: (guest[0], guest[1]))
+
+    print("NODE\tID\tNAME\tSTATUS\tTYPE")
+    for node_name, vmid, name, status, guest_type in guests:
+        print(f"{node_name}\t{vmid}\t{name}\t{status}\t{guest_type}")
+    return 0
 
 
 def _handle_vm_list(args: argparse.Namespace) -> int:
@@ -170,12 +256,24 @@ def _build_parser() -> argparse.ArgumentParser:
         sub.add_argument("vmname", help="VM name from config")
         sub.set_defaults(func=_handle_vm_action, action=action)
 
-    node_parser = subparsers.add_parser("node", help="Node-scoped actions")
-    node_sub = node_parser.add_subparsers(dest="node_command", required=True)
-
-    node_qm = node_sub.add_parser("qm-list", help="Run qm list on a node")
-    node_qm.add_argument("node", help="Node name from config")
-    node_qm.set_defaults(func=_handle_node_qm_list)
+    list_parser = subparsers.add_parser("list", help="List VMs and LXCs across nodes")
+    list_parser.add_argument(
+        "-n",
+        "--node",
+        help="Restrict listing to a single node",
+    )
+    list_filter = list_parser.add_mutually_exclusive_group()
+    list_filter.add_argument(
+        "--running",
+        action="store_true",
+        help="Show only running guests",
+    )
+    list_filter.add_argument(
+        "--stopped",
+        action="store_true",
+        help="Show only stopped guests",
+    )
+    list_parser.set_defaults(func=_handle_list)
 
     vm_parser = subparsers.add_parser("vm", help="VM-related actions")
     vm_sub = vm_parser.add_subparsers(dest="vm_command", required=True)

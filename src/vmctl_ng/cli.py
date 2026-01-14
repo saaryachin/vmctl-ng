@@ -208,8 +208,8 @@ def _parse_guest_table(output: str) -> list[tuple[int, str, str]]:
     lines = [line for line in output.splitlines() if line.strip()]
     if not lines:
         return []
-    header = lines[0].split()
-    header_map = {name.upper(): idx for idx, name in enumerate(header)}
+    header_tokens = [token.upper() for token in lines[0].split()]
+    header_map = {name: idx for idx, name in enumerate(header_tokens)}
 
     def _find_index(candidates: tuple[str, ...]) -> int | None:
         for candidate in candidates:
@@ -219,7 +219,7 @@ def _parse_guest_table(output: str) -> list[tuple[int, str, str]]:
 
     id_idx = _find_index(("VMID", "CTID", "ID"))
     name_idx = _find_index(("NAME",))
-    status_idx = _find_index(("STATUS",))
+    status_idx = _find_index(("STATUS", "STATE"))
     if id_idx is None or name_idx is None or status_idx is None:
         return []
 

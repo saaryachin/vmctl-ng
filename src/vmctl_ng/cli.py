@@ -246,6 +246,17 @@ def _parse_status_map(output: str) -> dict[int, str]:
     return statuses
 
 
+def _parse_pct_status(output: str) -> str | None:
+    for line in output.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        lower = stripped.lower()
+        if lower.startswith("status:"):
+            return stripped.split(":", 1)[1].strip()
+    return None
+
+
 def _handle_list(args: argparse.Namespace) -> int:
     config = _load_config_from_args(args)
     if args.node:
@@ -286,6 +297,19 @@ def _handle_list(args: argparse.Namespace) -> int:
         lxc_statuses = _parse_status_map(pct_output)
         for name, vmid in node.lxcs.items():
             status = lxc_statuses.get(vmid, "unknown")
+            if status.lower() == "unknown":
+                status_code, status_output = _run_remote_list_command(
+                    args,
+                    node_name,
+                    node,
+                    f"pct status {vmid}",
+                    "pct",
+                )
+                if status_code != 0:
+                    return status_code
+                fallback_status = _parse_pct_status(status_output)
+                if fallback_status:
+                    status = fallback_status
             guests.append((node_name, vmid, name, status, "LXC"))
 
     if args.running:

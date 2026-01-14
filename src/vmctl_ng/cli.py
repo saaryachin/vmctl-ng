@@ -383,9 +383,39 @@ def _handle_list(args: argparse.Namespace) -> int:
 
     guests.sort(key=lambda guest: (guest[0], guest[1]))
 
-    print("NODE\tID\tNAME\tSTATUS\tTYPE")
+    node_order: list[str] = []
+    rows_by_node: dict[str, list[tuple[int, str, str, str]]] = {}
     for node_name, vmid, name, status, guest_type in guests:
-        print(f"{node_name}\t{vmid}\t{name}\t{status}\t{guest_type}")
+        if node_name not in rows_by_node:
+            rows_by_node[node_name] = []
+            node_order.append(node_name)
+        rows_by_node[node_name].append((vmid, name, status, guest_type))
+
+    for idx, node_name in enumerate(node_order):
+        rows = rows_by_node[node_name]
+        id_width = max([len("ID")] + [len(str(row[0])) for row in rows])
+        name_width = max([len("NAME")] + [len(row[1]) for row in rows])
+        status_width = max([len("STATUS")] + [len(row[2]) for row in rows])
+        type_width = max([len("TYPE")] + [len(row[3]) for row in rows])
+
+        print(f"Node: {node_name}")
+        header = (
+            f"{'ID'.ljust(id_width)} "
+            f"{'NAME'.ljust(name_width)} "
+            f"{'STATUS'.ljust(status_width)} "
+            f"{'TYPE'.ljust(type_width)}"
+        )
+        print(header)
+        for vmid, name, status, guest_type in rows:
+            line = (
+                f"{str(vmid).ljust(id_width)} "
+                f"{name.ljust(name_width)} "
+                f"{status.ljust(status_width)} "
+                f"{guest_type.ljust(type_width)}"
+            )
+            print(f"  {line}")
+        if idx != len(node_order) - 1:
+            print()
     return 0
 
 

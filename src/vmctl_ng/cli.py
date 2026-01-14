@@ -398,14 +398,14 @@ def _handle_list(args: argparse.Namespace) -> int:
         status_width = max([len("STATUS")] + [len(row[2]) for row in rows])
         type_width = max([len("TYPE")] + [len(row[3]) for row in rows])
 
-        print(f"Node: {node_name}")
+        print(f"NODE: {node_name}")
         header = (
             f"{'ID'.ljust(id_width)} "
             f"{'NAME'.ljust(name_width)} "
             f"{'STATUS'.ljust(status_width)} "
             f"{'TYPE'.ljust(type_width)}"
         )
-        print(header)
+        print(f"  {header}")
         for vmid, name, status, guest_type in rows:
             line = (
                 f"{str(vmid).ljust(id_width)} "

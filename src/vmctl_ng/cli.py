@@ -56,20 +56,54 @@ def _load_config_from_args(args: argparse.Namespace):
         sys.exit(EXIT_CONFIG)
 
 
+def _resolve_guest_target(
+    config,
+    target: str,
+) -> tuple[str, str, int]:
+    if target.isdigit():
+        target_id = int(target)
+        matches: list[tuple[str, str, int]] = []
+        for node_name, node in config.nodes.items():
+            for name, vmid in node.vms.items():
+                if vmid == target_id:
+                    matches.append((node_name, "VM", vmid))
+            for name, ctid in node.lxcs.items():
+                if ctid == target_id:
+                    matches.append((node_name, "LXC", ctid))
+        if not matches:
+            _print_error(f"Unknown guest ID: {target}")
+            raise SystemExit(EXIT_NOT_FOUND)
+        if len(matches) > 1:
+            _print_error(f"Guest ID is not unique: {target}")
+            raise SystemExit(EXIT_NOT_FOUND)
+        return matches[0]
+
+    matches_by_name: list[tuple[str, str, int]] = []
+    for node_name, node in config.nodes.items():
+        if target in node.vms:
+            matches_by_name.append((node_name, "VM", node.vms[target]))
+        if target in node.lxcs:
+            matches_by_name.append((node_name, "LXC", node.lxcs[target]))
+    if not matches_by_name:
+        _print_error(f"Unknown guest name: {target}")
+        raise SystemExit(EXIT_NOT_FOUND)
+    if len(matches_by_name) > 1:
+        _print_error(f"Guest name is not unique: {target}")
+        raise SystemExit(EXIT_NOT_FOUND)
+    return matches_by_name[0]
+
+
 def _handle_vm_action(args: argparse.Namespace) -> int:
     config = _load_config_from_args(args)
-    vm = config.vm_index.get(args.vmname)
-    if not vm:
-        _print_error(f"Unknown VM name: {args.vmname}")
-        return EXIT_NOT_FOUND
 
-    node_name, vmid = vm
+    node_name, guest_type, guest_id = _resolve_guest_target(config, args.vmname)
     node = config.nodes[node_name]
+    command = "qm" if guest_type == "VM" else "pct"
     result = _run_ssh_sudo_command(
         node.host,
         node.user,
         node.port,
-        f"qm {args.action} {vmid}",
+        f"{command} {args.action} {guest_id}",
     )
     combined = (result.stdout or "") + (result.stderr or "")
 
@@ -80,14 +114,14 @@ def _handle_vm_action(args: argparse.Namespace) -> int:
 
     if _is_sudo_password_required(combined):
         if not args.askpass:
-            _print_error(_sudo_required_message("qm", node_name, node.host))
+            _print_error(_sudo_required_message(command, node_name, node.host))
             return EXIT_SUDO
         password = getpass(f"Password for sudo on node '{node_name}' ({node.host}): ")
         retry = _run_ssh_sudo_command(
             node.host,
             node.user,
             node.port,
-            f"qm {args.action} {vmid}",
+            f"{command} {args.action} {guest_id}",
             sudo_flags="-S -p ''",
             input_text=f"{password}\n",
         )
@@ -264,7 +298,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     for action in ("start", "stop", "status"):
         sub = subparsers.add_parser(action, help=f"qm {action} <vmid>")
-        sub.add_argument("vmname", help="VM name from config")
+        sub.add_argument("vmname", help="Guest name or numeric ID")
         sub.set_defaults(func=_handle_vm_action, action=action)
 
     list_parser = subparsers.add_parser("list", help="List VMs and LXCs across nodes")

@@ -14,6 +14,8 @@ python -m pip install -e .
 vmctl --config /path/to/config.yaml start webserver1
 vmctl stop webserver1
 vmctl status webserver1
+vmctl status 101
+vmctl status jumpbox1
 vmctl list
 vmctl vm list
 ```
@@ -29,18 +31,18 @@ Example (`config.example.yaml`):
 
 ```yaml
 nodes:
-  rook:
-    host: 172.16.1.100
+  prxmx1:
+    host: 192.168.1.100
     user: admin
     port: 2222
     vms:
       webserver1: 101
       fileserver1: 102
     lxcs:
-      vaultkeeper: 103
+      jumpbox1: 103
 ```
 
-VM names must be unique across all nodes. The `port` field is optional and defaults to 22. The `vms` and `lxcs` sections are optional.
+VM names must be unique across all nodes. IDs must also be unique across all VMs and LXCs if you want to target guests by numeric ID. The `port` field is optional and defaults to 22. The `vms` and `lxcs` sections are optional.
 
 ## SSH + sudo behavior
 
@@ -64,5 +66,7 @@ If `sudo -n` fails because a password is required, vmctl-ng prompts once for the
 ```bash
 vmctl vm list
 vmctl status webserver1
-vmctl list --node rook --running
+vmctl status 102
+vmctl status jumpbox1
+vmctl list --node prxmx1 --running
 ```

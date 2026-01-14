@@ -30,6 +30,15 @@ def _is_sudo_password_required(output: str) -> bool:
     return "sudo" in lower and "password" in lower and "required" in lower
 
 
+def _is_sudo_auth_failed(output: str) -> bool:
+    lower = output.lower()
+    return (
+        "sorry, try again" in lower
+        or "incorrect password" in lower
+        or "authentication failure" in lower
+    )
+
+
 def _run_ssh_sudo_command(
     host: str,
     user: str,
@@ -45,6 +54,40 @@ def _run_ssh_sudo_command(
         text=True,
         input=input_text,
     )
+
+
+def _run_sudo_with_password_retry(
+    args: argparse.Namespace,
+    node_name: str,
+    node,
+    command: str,
+    command_label: str,
+) -> tuple[int, str]:
+    for attempt in range(1, 4):
+        password = getpass(f"Password for sudo on node '{node_name}' ({node.host}): ")
+        retry = _run_ssh_sudo_command(
+            node.host,
+            node.user,
+            node.port,
+            command,
+            sudo_flags="-S -p ''",
+            input_text=f"{password}\n",
+        )
+        password = ""
+        retry_output = (retry.stdout or "") + (retry.stderr or "")
+        if retry.returncode == 0:
+            return 0, retry.stdout or ""
+        if _is_sudo_auth_failed(retry_output):
+            if attempt < 3:
+                continue
+            _print_error(
+                f"sudo authentication failed after 3 attempts on node '{node_name}' ({node.host})"
+            )
+            return EXIT_SUDO, ""
+        _print_error(retry_output.strip() or "Remote command failed")
+        return EXIT_REMOTE, ""
+    _print_error(_sudo_required_message(command_label, node_name, node.host))
+    return EXIT_SUDO, ""
 
 
 def _load_config_from_args(args: argparse.Namespace):
@@ -116,23 +159,17 @@ def _handle_vm_action(args: argparse.Namespace) -> int:
         if not args.askpass:
             _print_error(_sudo_required_message(command, node_name, node.host))
             return EXIT_SUDO
-        password = getpass(f"Password for sudo on node '{node_name}' ({node.host}): ")
-        retry = _run_ssh_sudo_command(
-            node.host,
-            node.user,
-            node.port,
+        retry_code, retry_stdout = _run_sudo_with_password_retry(
+            args,
+            node_name,
+            node,
             f"{command} {args.action} {guest_id}",
-            sudo_flags="-S -p ''",
-            input_text=f"{password}\n",
+            command,
         )
-        password = ""
-        retry_output = (retry.stdout or "") + (retry.stderr or "")
-        if retry.returncode == 0:
-            if retry.stdout:
-                print(retry.stdout, end="")
-            return 0
-        _print_error(retry_output.strip() or "Remote command failed")
-        return EXIT_REMOTE
+        if retry_code == 0:
+            if retry_stdout:
+                print(retry_stdout, end="")
+        return retry_code
 
     _print_error(combined.strip() or "Remote command failed")
     return EXIT_REMOTE
@@ -155,21 +192,13 @@ def _run_remote_list_command(
         if not args.askpass:
             _print_error(_sudo_required_message(command_label, node_name, node.host))
             return EXIT_SUDO, ""
-        password = getpass(f"Password for sudo on node '{node_name}' ({node.host}): ")
-        retry = _run_ssh_sudo_command(
-            node.host,
-            node.user,
-            node.port,
+        return _run_sudo_with_password_retry(
+            args,
+            node_name,
+            node,
             command,
-            sudo_flags="-S -p ''",
-            input_text=f"{password}\n",
+            command_label,
         )
-        password = ""
-        retry_output = (retry.stdout or "") + (retry.stderr or "")
-        if retry.returncode == 0:
-            return 0, retry.stdout or ""
-        _print_error(retry_output.strip() or "Remote command failed")
-        return EXIT_REMOTE, ""
 
     _print_error(combined.strip() or "Remote command failed")
     return EXIT_REMOTE, ""

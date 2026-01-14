@@ -269,10 +269,8 @@ def _build_list_script(lxc_ids: list[int]) -> str:
         lines.extend(
             [
                 f"for id in {joined_ids}; do",
-                '  if ! printf "%s\\n" "$pct_list" | awk "NR>1 {print \\$1}" | grep -qx "$id"; then',
-                '    echo "__VMCTL_PCT_STATUS__${id}"',
-                '    pct status "$id"',
-                "  fi",
+                '  echo "__VMCTL_PCT_STATUS__${id}"',
+                '  pct status "$id"',
                 "done",
             ]
         )

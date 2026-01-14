@@ -176,6 +176,13 @@ def _parse_guest_table(output: str) -> list[tuple[int, str, str]]:
     return rows
 
 
+def _parse_status_map(output: str) -> dict[int, str]:
+    statuses: dict[int, str] = {}
+    for vmid, _name, status in _parse_guest_table(output):
+        statuses[vmid] = status
+    return statuses
+
+
 def _handle_list(args: argparse.Namespace) -> int:
     config = _load_config_from_args(args)
     if args.node:
@@ -199,7 +206,9 @@ def _handle_list(args: argparse.Namespace) -> int:
         )
         if exit_code != 0:
             return exit_code
-        for vmid, name, status in _parse_guest_table(qm_output):
+        vm_statuses = _parse_status_map(qm_output)
+        for name, vmid in node.vms.items():
+            status = vm_statuses.get(vmid, "unknown")
             guests.append((node_name, vmid, name, status, "VM"))
 
         exit_code, pct_output = _run_remote_list_command(
@@ -211,7 +220,9 @@ def _handle_list(args: argparse.Namespace) -> int:
         )
         if exit_code != 0:
             return exit_code
-        for vmid, name, status in _parse_guest_table(pct_output):
+        lxc_statuses = _parse_status_map(pct_output)
+        for name, vmid in node.lxcs.items():
+            status = lxc_statuses.get(vmid, "unknown")
             guests.append((node_name, vmid, name, status, "LXC"))
 
     if args.running:

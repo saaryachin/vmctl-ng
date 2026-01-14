@@ -11,9 +11,9 @@ python -m pip install -e .
 ## Usage
 
 ```bash
-vmctl --config /path/to/config.yaml start jumpingrook
-vmctl stop jumpingrook
-vmctl status jumpingrook
+vmctl --config /path/to/config.yaml start webserver1
+vmctl stop webserver1
+vmctl status webserver1
 vmctl list
 vmctl vm list
 ```
@@ -30,15 +30,17 @@ Example (`config.example.yaml`):
 ```yaml
 nodes:
   rook:
-    host: 172.16.1.150
-    user: saar
-    port: 53433
+    host: 172.16.1.100
+    user: admin
+    port: 2222
     vms:
-      jumpingrook: 110
-      portcullis: 120
+      webserver1: 101
+      fileserver1: 102
+    lxcs:
+      vaultkeeper: 103
 ```
 
-VM names must be unique across all nodes. The `port` field is optional and defaults to 22.
+VM names must be unique across all nodes. The `port` field is optional and defaults to 22. The `vms` and `lxcs` sections are optional.
 
 ## SSH + sudo behavior
 
@@ -61,6 +63,6 @@ If `sudo -n` fails because a password is required, vmctl-ng prompts once for the
 
 ```bash
 vmctl vm list
-vmctl status jumpingrook
+vmctl status webserver1
 vmctl list --node rook --running
 ```

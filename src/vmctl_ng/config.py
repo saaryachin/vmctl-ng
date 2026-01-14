@@ -23,6 +23,7 @@ class NodeConfig:
     host: str
     user: str
     vms: dict[str, int]
+    lxcs: dict[str, int]
     port: int = 22
 
 
@@ -45,6 +46,8 @@ def _require_str(value: Any, label: str) -> str:
 
 
 def _require_vms(value: Any, label: str) -> dict[str, int]:
+    if value is None:
+        return {}
     vms = _require_mapping(value, label)
     normalized: dict[str, int] = {}
     for name, vmid in vms.items():
@@ -103,8 +106,16 @@ def load_config(path: Path) -> Config:
         user = _require_str(node_map.get("user"), f"nodes.{node_name}.user")
         port = _require_port(node_map.get("port"), f"nodes.{node_name}.port")
         vms = _require_vms(node_map.get("vms"), f"nodes.{node_name}.vms")
+        lxcs = _require_vms(node_map.get("lxcs"), f"nodes.{node_name}.lxcs")
 
-        node_cfg = NodeConfig(name=node_name, host=host, user=user, port=port, vms=vms)
+        node_cfg = NodeConfig(
+            name=node_name,
+            host=host,
+            user=user,
+            port=port,
+            vms=vms,
+            lxcs=lxcs,
+        )
         nodes[node_name] = node_cfg
 
         for vm_name, vmid in vms.items():

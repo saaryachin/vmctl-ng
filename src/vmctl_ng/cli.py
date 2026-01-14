@@ -217,7 +217,7 @@ def _parse_guest_table(output: str) -> list[tuple[int, str, str]]:
                 return header_map[candidate]
         return None
 
-    id_idx = _find_index(("VMID", "ID"))
+    id_idx = _find_index(("VMID", "CTID", "ID"))
     name_idx = _find_index(("NAME",))
     status_idx = _find_index(("STATUS",))
     if id_idx is None or name_idx is None or status_idx is None:

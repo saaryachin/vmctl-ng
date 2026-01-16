@@ -62,7 +62,8 @@ def _run_sudo_with_password_retry(
     node,
     command: str,
     command_label: str,
-) -> tuple[int, str]:
+    emit_errors: bool = True,
+) -> tuple[int, str, str]:
     for attempt in range(1, 4):
         password = getpass(f"Password for sudo on node '{node_name}' ({node.host}): ")
         retry = _run_ssh_sudo_command(
@@ -76,18 +77,24 @@ def _run_sudo_with_password_retry(
         password = ""
         retry_output = (retry.stdout or "") + (retry.stderr or "")
         if retry.returncode == 0:
-            return 0, retry.stdout or ""
+            return 0, retry.stdout or "", ""
         if _is_sudo_auth_failed(retry_output):
             if attempt < 3:
                 continue
-            _print_error(
+            message = (
                 f"sudo authentication failed after 3 attempts on node '{node_name}' ({node.host})"
             )
-            return EXIT_SUDO, ""
-        _print_error(retry_output.strip() or "Remote command failed")
-        return EXIT_REMOTE, ""
-    _print_error(_sudo_required_message(command_label, node_name, node.host))
-    return EXIT_SUDO, ""
+            if emit_errors:
+                _print_error(message)
+            return EXIT_SUDO, "", message
+        message = retry_output.strip() or "Remote command failed"
+        if emit_errors:
+            _print_error(message)
+        return EXIT_REMOTE, "", message
+    message = _sudo_required_message(command_label, node_name, node.host)
+    if emit_errors:
+        _print_error(message)
+    return EXIT_SUDO, "", message
 
 
 def _load_config_from_args(args: argparse.Namespace):
@@ -159,7 +166,7 @@ def _handle_vm_action(args: argparse.Namespace) -> int:
         if not args.askpass:
             _print_error(_sudo_required_message(command, node_name, node.host))
             return EXIT_SUDO
-        retry_code, retry_stdout = _run_sudo_with_password_retry(
+        retry_code, retry_stdout, _retry_error = _run_sudo_with_password_retry(
             args,
             node_name,
             node,
@@ -192,13 +199,16 @@ def _run_remote_list_command(
         if not args.askpass:
             _print_error(_sudo_required_message(command_label, node_name, node.host))
             return EXIT_SUDO, ""
-        return _run_sudo_with_password_retry(
+        retry_code, retry_stdout, _retry_error = _run_sudo_with_password_retry(
             args,
             node_name,
             node,
             command,
             command_label,
         )
+        if retry_code == 0:
+            return 0, retry_stdout
+        return retry_code, ""
 
     _print_error(combined.strip() or "Remote command failed")
     return EXIT_REMOTE, ""
@@ -283,28 +293,34 @@ def _run_remote_list_bundle(
     node_name: str,
     node,
     lxc_ids: list[int],
-) -> tuple[int, str]:
+    emit_errors: bool = True,
+) -> tuple[int, str, str]:
     command = _build_list_script(lxc_ids)
     result = _run_ssh_sudo_command(node.host, node.user, node.port, command)
     combined = (result.stdout or "") + (result.stderr or "")
 
     if result.returncode == 0:
-        return 0, result.stdout or ""
+        return 0, result.stdout or "", ""
 
     if _is_sudo_password_required(combined):
         if not args.askpass:
-            _print_error(_sudo_required_message("qm", node_name, node.host))
-            return EXIT_SUDO, ""
+            message = _sudo_required_message("qm", node_name, node.host)
+            if emit_errors:
+                _print_error(message)
+            return EXIT_SUDO, "", message
         return _run_sudo_with_password_retry(
             args,
             node_name,
             node,
             command,
             "qm",
+            emit_errors=emit_errors,
         )
 
-    _print_error(combined.strip() or "Remote command failed")
-    return EXIT_REMOTE, ""
+    message = combined.strip() or "Remote command failed"
+    if emit_errors:
+        _print_error(message)
+    return EXIT_REMOTE, "", message
 
 
 def _split_list_bundle(output: str) -> tuple[str, str, dict[int, str]]:
@@ -339,6 +355,27 @@ def _split_list_bundle(output: str) -> tuple[str, str, dict[int, str]]:
     return "\n".join(qm_lines), "\n".join(pct_lines), pct_status_text
 
 
+def _list_node_bundle_safe(
+    args: argparse.Namespace,
+    node_name: str,
+    node,
+    strict: bool,
+) -> tuple[bool, str, str, int | None]:
+    try:
+        exit_code, combined_output, error_message = _run_remote_list_bundle(
+            args,
+            node_name,
+            node,
+            list(node.lxcs.values()),
+            emit_errors=strict,
+        )
+    except Exception as exc:
+        return False, str(exc), "", None
+    if exit_code != 0:
+        return False, error_message or "Remote command failed", "", exit_code
+    return True, "", combined_output, 0
+
+
 def _handle_list(args: argparse.Namespace) -> int:
     config = _load_config_from_args(args)
     if args.node:
@@ -351,16 +388,23 @@ def _handle_list(args: argparse.Namespace) -> int:
         nodes = config.nodes
 
     guests: list[tuple[str, int, str, str, str]] = []
+    failures: list[tuple[str, str, int, str]] = []
     for node_name in sorted(nodes):
         node = nodes[node_name]
-        exit_code, combined_output = _run_remote_list_bundle(
+        success, error_message, combined_output, exit_code = _list_node_bundle_safe(
             args,
             node_name,
             node,
-            list(node.lxcs.values()),
+            args.strict,
         )
-        if exit_code != 0:
-            return exit_code
+        if not success:
+            if args.strict:
+                if exit_code is None:
+                    _print_error(error_message)
+                    return 1
+                return exit_code
+            failures.append((node_name, node.host, node.port, error_message))
+            continue
         qm_output, pct_output, pct_status_outputs = _split_list_bundle(combined_output)
         vm_statuses = _parse_status_map(qm_output)
         for name, vmid in node.vms.items():
@@ -416,6 +460,16 @@ def _handle_list(args: argparse.Namespace) -> int:
             print(f"  {line}")
         if idx != len(node_order) - 1:
             print()
+
+    if failures:
+        if node_order:
+            print()
+        print("FAILED NODES")
+        for node_name, host, port, message in failures:
+            print(f"  {node_name} ({host}:{port}): {message}")
+        if not node_order:
+            print("No nodes reachable.")
+        return 1
     return 0
 
 
@@ -464,6 +518,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--stopped",
         action="store_true",
         help="Show only stopped guests",
+    )
+    list_parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Fail fast if any node is unreachable",
     )
     list_parser.set_defaults(func=_handle_list)
 

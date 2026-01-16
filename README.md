@@ -47,6 +47,8 @@ List all guests across all nodes:
 vmctl list
 ```
 
+`vmctl list` is best-effort across nodes by default; use `--strict` to fail fast on the first unreachable node.
+
 Filter the list:
 
 ```bash

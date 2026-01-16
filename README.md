@@ -1,15 +1,17 @@
 # vmctl-ng
 
-`vmctl-ng` is a small, opinionated CLI for controlling **Proxmox VMs and LXCs** over SSH from a **jumpserver**.
+`vmctl-ng` is a small, opinionated CLI for controlling Proxmox VMs and LXCs over SSH from a jumpserver.
 
 It’s built for homelabs where:
 
 - Proxmox nodes live behind a firewall  
 - all access goes through a single jump host  
-- you want **human names**, not VMIDs  
-- and you don’t want to wire up the Proxmox API just to start or stop a machine  
 
-It does one thing well: **list, start, stop, and check the status of guests across multiple Proxmox nodes**, safely and predictably.
+And is useful if:
+- you don't want to use the Proxmox API just to start/stop a machine
+- you prefer using your terminal rather then the GUI, or the GUI is unavailable because of firewall settings.
+
+It does one thing well: list, start, stop, and check the status of guests across multiple Proxmox nodes, safely and predictably, using either Proxmox ID numbers or names.
 
 ---
 
@@ -47,7 +49,7 @@ List all guests across all nodes:
 vmctl list
 ```
 
-`vmctl list` is best-effort across nodes by default; use `--strict` to fail fast on the first unreachable node.
+`vmctl list` is best-effort across nodes by default; use `--strict` to fail fast on the first unreachable node. In strict mode, vmctl returns the underlying error code (e.g. SSH failure, sudo failure).
 
 Filter the list:
 
@@ -146,17 +148,6 @@ vmctl status 102
 vmctl status jumpbox1
 vmctl list --node prxmx1 --running
 ```
-
----
-
-## Design philosophy
-
-- **Config-driven** — no hardcoded lab assumptions  
-- **Name-first** — VMIDs are an implementation detail  
-- **Safe by default** — no hidden sudo tricks, no silent failures  
-- **Boring on purpose** — predictable behavior beats cleverness  
-
-Sometimes SSH + sudo + good defaults are exactly what you want.
 
 ---
 

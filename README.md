@@ -66,11 +66,17 @@ vmctl list --stopped
 Example configuration (`config.example.yaml`):
 
 ```yaml
+defaults:
+  user: admin
+  port: 2222
+  identity_file: ~/.ssh/proxmox_ed25519
+  identities_only: true
+  ssh_options:
+    - StrictHostKeyChecking=no
+    - UserKnownHostsFile=/dev/null
 nodes:
   prxmx1:
     host: 192.168.1.100
-    user: admin
-    port: 2222
     vms:
       webserver1: 101
       fileserver1: 102
@@ -82,7 +88,8 @@ nodes:
 
 - **Guest names must be unique across all nodes**
 - Guest **IDs should be unique** across VMs and LXCs if you want to target guests by numeric ID
-- `port` is optional (defaults to `22`)
+- `defaults` may include `user`, `port`, `identity_file`, `identities_only`, and `ssh_options`
+- `port` is optional (defaults to `22` if not set in defaults or per node)
 - `vms` and `lxcs` sections are optional — a node may have only one or the other
 
 ---
@@ -112,14 +119,14 @@ Guest listing runs `qm list` and `pct list` together in a **single SSH session p
 ### Sudo authentication
 
 - By default, vmctl-ng tries `sudo -n` (non-interactive)
-- If a password is required, it prompts interactively and retries
+- If `--askpass` is set and a password is required, it prompts interactively and retries
 - You get **up to 3 attempts per node**
 - Authentication is cached per node for the duration of the command
 
-To disable prompting and fail immediately:
+To enable prompting:
 
 ```bash
-vmctl --no-askpass list
+vmctl --askpass list
 ```
 
 ---

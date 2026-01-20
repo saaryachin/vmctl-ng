@@ -46,10 +46,26 @@ def _run_ssh_sudo_command(
     command: str,
     sudo_flags: str = "-n",
     input_text: str | None = None,
+    identity_file: str | None = None,
+    identities_only: bool = False,
+    ssh_options: list[str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     remote_cmd = f"sudo {sudo_flags} {command}"
+    ssh_cmd = ["ssh", "-p", str(port)]
+    if identity_file:
+        ssh_cmd.extend(["-i", identity_file])
+    if identities_only:
+        ssh_cmd.extend(["-o", "IdentitiesOnly=yes"])
+    if ssh_options:
+        for opt in ssh_options:
+            if opt.startswith("-"):
+                ssh_cmd.append(opt)
+            else:
+                ssh_cmd.extend(["-o", opt])
+    ssh_cmd.append(f"{user}@{host}")
+    ssh_cmd.append(remote_cmd)
     return subprocess.run(
-        ["ssh", "-p", str(port), f"{user}@{host}", remote_cmd],
+        ssh_cmd,
         capture_output=True,
         text=True,
         input=input_text,
@@ -73,6 +89,9 @@ def _run_sudo_with_password_retry(
             command,
             sudo_flags="-S -p ''",
             input_text=f"{password}\n",
+            identity_file=node.identity_file,
+            identities_only=node.identities_only,
+            ssh_options=node.ssh_options,
         )
         password = ""
         retry_output = (retry.stdout or "") + (retry.stderr or "")
@@ -154,6 +173,9 @@ def _handle_vm_action(args: argparse.Namespace) -> int:
         node.user,
         node.port,
         f"{command} {args.action} {guest_id}",
+        identity_file=node.identity_file,
+        identities_only=node.identities_only,
+        ssh_options=node.ssh_options,
     )
     combined = (result.stdout or "") + (result.stderr or "")
 
@@ -189,7 +211,15 @@ def _run_remote_list_command(
     command: str,
     command_label: str,
 ) -> tuple[int, str]:
-    result = _run_ssh_sudo_command(node.host, node.user, node.port, command)
+    result = _run_ssh_sudo_command(
+        node.host,
+        node.user,
+        node.port,
+        command,
+        identity_file=node.identity_file,
+        identities_only=node.identities_only,
+        ssh_options=node.ssh_options,
+    )
     combined = (result.stdout or "") + (result.stderr or "")
 
     if result.returncode == 0:
@@ -296,7 +326,15 @@ def _run_remote_list_bundle(
     emit_errors: bool = True,
 ) -> tuple[int, str, str]:
     command = _build_list_script(lxc_ids)
-    result = _run_ssh_sudo_command(node.host, node.user, node.port, command)
+    result = _run_ssh_sudo_command(
+        node.host,
+        node.user,
+        node.port,
+        command,
+        identity_file=node.identity_file,
+        identities_only=node.identities_only,
+        ssh_options=node.ssh_options,
+    )
     combined = (result.stdout or "") + (result.stderr or "")
 
     if result.returncode == 0:
@@ -491,8 +529,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--askpass",
         action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Prompt for sudo password if needed (default: enabled)",
+        default=False,
+        help="Prompt for sudo password if needed (default: disabled)",
     )
 
     subparsers = parser.add_subparsers(dest="command", required=True)

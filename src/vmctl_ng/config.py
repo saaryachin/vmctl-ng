@@ -24,6 +24,9 @@ class NodeConfig:
     user: str
     vms: dict[str, int]
     lxcs: dict[str, int]
+    identity_file: str | None
+    identities_only: bool
+    ssh_options: list[str]
     port: int = 22
 
 
@@ -43,6 +46,12 @@ def _require_str(value: Any, label: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ConfigError(f"{label} must be a non-empty string")
     return value
+
+
+def _require_optional_str(value: Any, label: str) -> str | None:
+    if value is None:
+        return None
+    return _require_str(value, label)
 
 
 def _require_vms(value: Any, label: str) -> dict[str, int]:
@@ -65,6 +74,27 @@ def _require_port(value: Any, label: str) -> int:
     if not isinstance(value, int):
         raise ConfigError(f"{label} must be an integer")
     return value
+
+
+def _require_bool(value: Any, label: str) -> bool:
+    if value is None:
+        return False
+    if not isinstance(value, bool):
+        raise ConfigError(f"{label} must be a boolean")
+    return value
+
+
+def _require_ssh_options(value: Any, label: str) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ConfigError(f"{label} must be a list")
+    options: list[str] = []
+    for item in value:
+        if not isinstance(item, str) or not item.strip():
+            raise ConfigError(f"{label} entries must be non-empty strings")
+        options.append(item)
+    return options
 
 
 def find_config_path(override: str | None) -> Path:
@@ -94,6 +124,7 @@ def load_config(path: Path) -> Config:
 
     root = _require_mapping(raw, "root")
     nodes_raw = _require_mapping(root.get("nodes"), "nodes")
+    defaults_raw = _require_mapping(root.get("defaults", {}), "defaults")
 
     nodes: dict[str, NodeConfig] = {}
     vm_index: dict[str, tuple[str, int]] = {}
@@ -103,8 +134,26 @@ def load_config(path: Path) -> Config:
             raise ConfigError("Node names must be non-empty strings")
         node_map = _require_mapping(node_data, f"nodes.{node_name}")
         host = _require_str(node_map.get("host"), f"nodes.{node_name}.host")
-        user = _require_str(node_map.get("user"), f"nodes.{node_name}.user")
-        port = _require_port(node_map.get("port"), f"nodes.{node_name}.port")
+        user = _require_str(
+            node_map.get("user", defaults_raw.get("user")),
+            f"nodes.{node_name}.user",
+        )
+        port = _require_port(
+            node_map.get("port", defaults_raw.get("port")),
+            f"nodes.{node_name}.port",
+        )
+        identity_file = _require_optional_str(
+            node_map.get("identity_file", defaults_raw.get("identity_file")),
+            f"nodes.{node_name}.identity_file",
+        )
+        identities_only = _require_bool(
+            node_map.get("identities_only", defaults_raw.get("identities_only")),
+            f"nodes.{node_name}.identities_only",
+        )
+        ssh_options = _require_ssh_options(
+            node_map.get("ssh_options", defaults_raw.get("ssh_options")),
+            f"nodes.{node_name}.ssh_options",
+        )
         vms = _require_vms(node_map.get("vms"), f"nodes.{node_name}.vms")
         lxcs = _require_vms(node_map.get("lxcs"), f"nodes.{node_name}.lxcs")
 
@@ -115,6 +164,9 @@ def load_config(path: Path) -> Config:
             port=port,
             vms=vms,
             lxcs=lxcs,
+            identity_file=identity_file,
+            identities_only=identities_only,
+            ssh_options=ssh_options,
         )
         nodes[node_name] = node_cfg
 

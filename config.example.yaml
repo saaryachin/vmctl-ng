@@ -1,8 +1,14 @@
+defaults:
+  user: admin
+  port: 2222
+  identity_file: ~/.ssh/proxmox_ed25519
+  identities_only: true
+  ssh_options:
+    - StrictHostKeyChecking=no
+    - UserKnownHostsFile=/dev/null
 nodes:
   proxmoxsrv1:
     host: 192.168.1.100
-    user: admin
-    port: 2222
     vms:
       webserver: 101
       fileserver: 102

@@ -204,46 +204,6 @@ def _handle_vm_action(args: argparse.Namespace) -> int:
     return EXIT_REMOTE
 
 
-def _run_remote_list_command(
-    args: argparse.Namespace,
-    node_name: str,
-    node,
-    command: str,
-    command_label: str,
-) -> tuple[int, str]:
-    result = _run_ssh_sudo_command(
-        node.host,
-        node.user,
-        node.port,
-        command,
-        identity_file=node.identity_file,
-        identities_only=node.identities_only,
-        ssh_options=node.ssh_options,
-    )
-    combined = (result.stdout or "") + (result.stderr or "")
-
-    if result.returncode == 0:
-        return 0, result.stdout or ""
-
-    if _is_sudo_password_required(combined):
-        if not args.askpass:
-            _print_error(_sudo_required_message(command_label, node_name, node.host))
-            return EXIT_SUDO, ""
-        retry_code, retry_stdout, _retry_error = _run_sudo_with_password_retry(
-            args,
-            node_name,
-            node,
-            command,
-            command_label,
-        )
-        if retry_code == 0:
-            return 0, retry_stdout
-        return retry_code, ""
-
-    _print_error(combined.strip() or "Remote command failed")
-    return EXIT_REMOTE, ""
-
-
 def _parse_guest_table(output: str) -> list[tuple[int, str, str]]:
     lines = [line for line in output.splitlines() if line.strip()]
     if not lines:
@@ -297,35 +257,14 @@ def _parse_pct_status(output: str) -> str | None:
     return None
 
 
-def _build_list_script(lxc_ids: list[int]) -> str:
-    lines = [
-        'qm_list=$(qm list)',
-        'printf "__VMCTL_QM__\\n%s\\n" "$qm_list"',
-        'pct_list=$(pct list)',
-        'printf "__VMCTL_PCT__\\n%s\\n" "$pct_list"',
-    ]
-    if lxc_ids:
-        joined_ids = " ".join(str(ctid) for ctid in lxc_ids)
-        lines.extend(
-            [
-                f"for id in {joined_ids}; do",
-                '  echo "__VMCTL_PCT_STATUS__${id}"',
-                '  pct status "$id"',
-                "done",
-            ]
-        )
-    script = "\n".join(lines)
-    return f"sh -c '{script}'"
-
-
-def _run_remote_list_bundle(
+def _run_remote_command_with_askpass(
     args: argparse.Namespace,
     node_name: str,
     node,
-    lxc_ids: list[int],
+    command: str,
+    command_label: str,
     emit_errors: bool = True,
 ) -> tuple[int, str, str]:
-    command = _build_list_script(lxc_ids)
     result = _run_ssh_sudo_command(
         node.host,
         node.user,
@@ -342,7 +281,7 @@ def _run_remote_list_bundle(
 
     if _is_sudo_password_required(combined):
         if not args.askpass:
-            message = _sudo_required_message("qm", node_name, node.host)
+            message = _sudo_required_message(command_label, node_name, node.host)
             if emit_errors:
                 _print_error(message)
             return EXIT_SUDO, "", message
@@ -351,7 +290,7 @@ def _run_remote_list_bundle(
             node_name,
             node,
             command,
-            "qm",
+            command_label,
             emit_errors=emit_errors,
         )
 
@@ -361,57 +300,53 @@ def _run_remote_list_bundle(
     return EXIT_REMOTE, "", message
 
 
-def _split_list_bundle(output: str) -> tuple[str, str, dict[int, str]]:
-    qm_lines: list[str] = []
-    pct_lines: list[str] = []
-    pct_status: dict[int, list[str]] = {}
-    current: str | None = None
-    current_id: int | None = None
-
-    for line in output.splitlines():
-        if line == "__VMCTL_QM__":
-            current = "qm"
-            current_id = None
-            continue
-        if line == "__VMCTL_PCT__":
-            current = "pct"
-            current_id = None
-            continue
-        if line.startswith("__VMCTL_PCT_STATUS__"):
-            current = "pct_status"
-            current_id = int(line.split("__VMCTL_PCT_STATUS__", 1)[1])
-            pct_status[current_id] = []
-            continue
-        if current == "qm":
-            qm_lines.append(line)
-        elif current == "pct":
-            pct_lines.append(line)
-        elif current == "pct_status" and current_id is not None:
-            pct_status[current_id].append(line)
-
-    pct_status_text = {ctid: "\n".join(lines) for ctid, lines in pct_status.items()}
-    return "\n".join(qm_lines), "\n".join(pct_lines), pct_status_text
-
-
-def _list_node_bundle_safe(
+def _run_remote_qm_list(
     args: argparse.Namespace,
     node_name: str,
     node,
-    strict: bool,
-) -> tuple[bool, str, str, int | None]:
-    try:
-        exit_code, combined_output, error_message = _run_remote_list_bundle(
-            args,
-            node_name,
-            node,
-            list(node.lxcs.values()),
-            emit_errors=strict,
-        )
-    except Exception as exc:
-        return False, str(exc), "", None
-    if exit_code != 0:
-        return False, error_message or "Remote command failed", "", exit_code
-    return True, "", combined_output, 0
+    emit_errors: bool = True,
+) -> tuple[int, str, str]:
+    return _run_remote_command_with_askpass(
+        args,
+        node_name,
+        node,
+        "/usr/sbin/qm list",
+        "qm",
+        emit_errors=emit_errors,
+    )
+
+
+def _run_remote_pct_list(
+    args: argparse.Namespace,
+    node_name: str,
+    node,
+    emit_errors: bool = True,
+) -> tuple[int, str, str]:
+    return _run_remote_command_with_askpass(
+        args,
+        node_name,
+        node,
+        "/usr/sbin/pct list",
+        "pct",
+        emit_errors=emit_errors,
+    )
+
+
+def _run_remote_pct_status(
+    args: argparse.Namespace,
+    node_name: str,
+    node,
+    ctid: int,
+    emit_errors: bool = True,
+) -> tuple[int, str, str]:
+    return _run_remote_command_with_askpass(
+        args,
+        node_name,
+        node,
+        f"/usr/sbin/pct status {ctid}",
+        "pct",
+        emit_errors=emit_errors,
+    )
 
 
 def _handle_list(args: argparse.Namespace) -> int:
@@ -429,21 +364,28 @@ def _handle_list(args: argparse.Namespace) -> int:
     failures: list[tuple[str, str, int, str]] = []
     for node_name in sorted(nodes):
         node = nodes[node_name]
-        success, error_message, combined_output, exit_code = _list_node_bundle_safe(
+        qm_code, qm_output, qm_error = _run_remote_qm_list(
             args,
             node_name,
             node,
-            args.strict,
+            emit_errors=args.strict,
         )
-        if not success:
+        if qm_code != 0:
             if args.strict:
-                if exit_code is None:
-                    _print_error(error_message)
-                    return 1
-                return exit_code
-            failures.append((node_name, node.host, node.port, error_message))
+                return qm_code
+            failures.append((node_name, node.host, node.port, qm_error or "Remote command failed"))
             continue
-        qm_output, pct_output, pct_status_outputs = _split_list_bundle(combined_output)
+        pct_code, pct_output, pct_error = _run_remote_pct_list(
+            args,
+            node_name,
+            node,
+            emit_errors=args.strict,
+        )
+        if pct_code != 0:
+            if args.strict:
+                return pct_code
+            failures.append((node_name, node.host, node.port, pct_error or "Remote command failed"))
+            continue
         vm_statuses = _parse_status_map(qm_output)
         for name, vmid in node.vms.items():
             status = vm_statuses.get(vmid, "unknown")
@@ -453,7 +395,21 @@ def _handle_list(args: argparse.Namespace) -> int:
         for name, vmid in node.lxcs.items():
             status = lxc_statuses.get(vmid, "unknown")
             if status.lower() == "unknown":
-                fallback_status = _parse_pct_status(pct_status_outputs.get(vmid, ""))
+                status_code, status_output, status_error = _run_remote_pct_status(
+                    args,
+                    node_name,
+                    node,
+                    vmid,
+                    emit_errors=args.strict,
+                )
+                if status_code != 0:
+                    if args.strict:
+                        return status_code
+                    failures.append(
+                        (node_name, node.host, node.port, status_error or "Remote command failed")
+                    )
+                    continue
+                fallback_status = _parse_pct_status(status_output)
                 if fallback_status:
                     status = fallback_status
             guests.append((node_name, vmid, name, status, "LXC"))

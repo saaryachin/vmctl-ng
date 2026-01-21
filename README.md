@@ -79,7 +79,7 @@ defaults:
   port: 22
   user:
     name: vmctl
-    identity_file: ~/.ssh/vmctl_ed25519
+    identity_file: ~/.ssh/vmctl-ed25519
     identities_only: true
   ssh_options: []
 nodes:
@@ -94,15 +94,15 @@ nodes:
     host: 192.168.1.101
     user:
       name: admin
-      identity_file: ~/.ssh/admin_ed25519
-      identities_only: true
+      # identity_file omitted -> use SSH agent forwarding
+      identities_only: false
 ```
 
 ### Notes
 
 - **Guest names must be unique across all nodes**
 - Guest **IDs should be unique** across VMs and LXCs if you want to target guests by numeric ID
-- `defaults.user` is required and contains `name`, `identity_file`, and `identities_only`
+- `defaults.user` is required and contains `name`; `identity_file` is optional for agent-forwarded SSH
 - `defaults.port` is optional (defaults to `22` if omitted)
 - `defaults.ssh_options` is optional
 - `vms` and `lxcs` sections are optional — a node may have only one or the other

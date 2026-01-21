@@ -38,7 +38,7 @@ class Config:
 @dataclass(frozen=True)
 class UserConfig:
     name: str
-    identity_file: str
+    identity_file: str | None
     identities_only: bool
 
 
@@ -107,11 +107,19 @@ def _require_ssh_options(value: Any, label: str) -> list[str]:
 def _require_user(value: Any, label: str) -> UserConfig:
     user_map = _require_mapping(value, label)
     name = _require_str(user_map.get("name"), f"{label}.name")
-    identity_file = _require_str(user_map.get("identity_file"), f"{label}.identity_file")
-    identities_only = _require_bool(user_map.get("identities_only"), f"{label}.identities_only")
+    identity_raw = user_map.get("identity_file")
+    identity_file = None
+    if identity_raw is not None:
+        identity_file = _require_str(identity_raw, f"{label}.identity_file")
+        identity_file = str(Path(identity_file).expanduser())
+    identities_raw = user_map.get("identities_only")
+    if identities_raw is None:
+        identities_only = identity_file is not None
+    else:
+        identities_only = _require_bool(identities_raw, f"{label}.identities_only")
     return UserConfig(
         name=name,
-        identity_file=str(Path(identity_file).expanduser()),
+        identity_file=identity_file,
         identities_only=identities_only,
     )
 
@@ -153,7 +161,9 @@ def load_config(path: Path) -> Config:
     if defaults_user_raw is None:
         raise ConfigError("defaults.user is required")
     if not isinstance(defaults_user_raw, dict):
-        raise ConfigError("defaults.user must be a mapping with name/identity_file/identities_only")
+        raise ConfigError(
+            "defaults.user must be a mapping with name and optional identity_file/identities_only"
+        )
     defaults_user = _require_user(defaults_user_raw, "defaults.user")
     defaults_port = _require_port(defaults_raw.get("port"), "defaults.port")
     defaults_ssh_options = _require_ssh_options(defaults_raw.get("ssh_options"), "defaults.ssh_options")
@@ -182,7 +192,7 @@ def load_config(path: Path) -> Config:
         else:
             if not isinstance(user_block, dict):
                 raise ConfigError(
-                    f"nodes.{node_name}.user must be a mapping with name/identity_file/identities_only"
+                    f"nodes.{node_name}.user must be a mapping with name and optional identity_file/identities_only"
                 )
             user = _require_user(user_block, f"nodes.{node_name}.user")
         port = _require_port(node_map.get("port", defaults.port), f"nodes.{node_name}.port")

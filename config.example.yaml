@@ -24,3 +24,9 @@ nodes:
     vms:
       webserver: 101
       fileserver: 102
+  proxmoxsrv2:
+    host: 192.168.1.101
+    user:
+      name: saar
+      # identity_file omitted -> use SSH agent forwarding
+      identities_only: false

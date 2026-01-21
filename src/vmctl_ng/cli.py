@@ -4,6 +4,7 @@ import argparse
 import subprocess
 import sys
 from getpass import getpass
+import shlex
 
 from .config import ConfigError, find_config_path, load_config
 
@@ -16,6 +17,16 @@ EXIT_SUDO = 5
 
 def _print_error(message: str) -> None:
     print(f"error: {message}", file=sys.stderr)
+
+
+def _log_verbose(args: argparse.Namespace, message: str) -> None:
+    if getattr(args, "verbose", False):
+        print(message)
+
+
+def _log_debug(args: argparse.Namespace, message: str) -> None:
+    if getattr(args, "debug", False):
+        print(message)
 
 
 def _sudo_required_message(command_label: str, node_name: str, host: str) -> str:
@@ -39,18 +50,15 @@ def _is_sudo_auth_failed(output: str) -> bool:
     )
 
 
-def _run_ssh_sudo_command(
+def _build_ssh_command(
     host: str,
     user: str,
     port: int,
-    command: str,
-    sudo_flags: str = "-n",
-    input_text: str | None = None,
+    remote_cmd: str,
     identity_file: str | None = None,
     identities_only: bool = False,
     ssh_options: list[str] | None = None,
-) -> subprocess.CompletedProcess[str]:
-    remote_cmd = f"sudo {sudo_flags} {command}"
+) -> list[str]:
     ssh_cmd = ["ssh", "-p", str(port)]
     if identity_file:
         ssh_cmd.extend(["-i", identity_file])
@@ -64,6 +72,34 @@ def _run_ssh_sudo_command(
                 ssh_cmd.extend(["-o", opt])
     ssh_cmd.append(f"{user}@{host}")
     ssh_cmd.append(remote_cmd)
+    return ssh_cmd
+
+
+def _format_ssh_command(cmd: list[str]) -> str:
+    return " ".join(shlex.quote(arg) for arg in cmd)
+
+
+def _run_ssh_sudo_command(
+    host: str,
+    user: str,
+    port: int,
+    command: str,
+    sudo_flags: str = "-n",
+    input_text: str | None = None,
+    identity_file: str | None = None,
+    identities_only: bool = False,
+    ssh_options: list[str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    remote_cmd = f"sudo {sudo_flags} {command}"
+    ssh_cmd = _build_ssh_command(
+        host,
+        user,
+        port,
+        remote_cmd,
+        identity_file=identity_file,
+        identities_only=identities_only,
+        ssh_options=ssh_options,
+    )
     return subprocess.run(
         ssh_cmd,
         capture_output=True,
@@ -82,6 +118,16 @@ def _run_sudo_with_password_retry(
 ) -> tuple[int, str, str]:
     for attempt in range(1, 4):
         password = getpass(f"Password for sudo on node '{node_name}' ({node.host}): ")
+        ssh_cmd = _build_ssh_command(
+            node.host,
+            node.user,
+            node.port,
+            f"sudo -S -p '' {command}",
+            identity_file=node.identity_file,
+            identities_only=node.identities_only,
+            ssh_options=node.ssh_options,
+        )
+        _log_debug(args, f"→ SSH: {_format_ssh_command(ssh_cmd)}")
         retry = _run_ssh_sudo_command(
             node.host,
             node.user,
@@ -95,6 +141,8 @@ def _run_sudo_with_password_retry(
         )
         password = ""
         retry_output = (retry.stdout or "") + (retry.stderr or "")
+        _log_debug(args, f"→ stdout: {retry.stdout or ''}")
+        _log_debug(args, f"→ stderr: {retry.stderr or ''}")
         if retry.returncode == 0:
             return 0, retry.stdout or "", ""
         if _is_sudo_auth_failed(retry_output):
@@ -128,17 +176,17 @@ def _load_config_from_args(args: argparse.Namespace):
 def _resolve_guest_target(
     config,
     target: str,
-) -> tuple[str, str, int]:
+) -> tuple[str, str, int, str]:
     if target.isdigit():
         target_id = int(target)
-        matches: list[tuple[str, str, int]] = []
+        matches: list[tuple[str, str, int, str]] = []
         for node_name, node in config.nodes.items():
             for name, vmid in node.vms.items():
                 if vmid == target_id:
-                    matches.append((node_name, "VM", vmid))
+                    matches.append((node_name, "VM", vmid, name))
             for name, ctid in node.lxcs.items():
                 if ctid == target_id:
-                    matches.append((node_name, "LXC", ctid))
+                    matches.append((node_name, "LXC", ctid, name))
         if not matches:
             _print_error(f"Unknown guest ID: {target}")
             raise SystemExit(EXIT_NOT_FOUND)
@@ -147,12 +195,12 @@ def _resolve_guest_target(
             raise SystemExit(EXIT_NOT_FOUND)
         return matches[0]
 
-    matches_by_name: list[tuple[str, str, int]] = []
+    matches_by_name: list[tuple[str, str, int, str]] = []
     for node_name, node in config.nodes.items():
         if target in node.vms:
-            matches_by_name.append((node_name, "VM", node.vms[target]))
+            matches_by_name.append((node_name, "VM", node.vms[target], target))
         if target in node.lxcs:
-            matches_by_name.append((node_name, "LXC", node.lxcs[target]))
+            matches_by_name.append((node_name, "LXC", node.lxcs[target], target))
     if not matches_by_name:
         _print_error(f"Unknown guest name: {target}")
         raise SystemExit(EXIT_NOT_FOUND)
@@ -165,9 +213,26 @@ def _resolve_guest_target(
 def _handle_vm_action(args: argparse.Namespace) -> int:
     config = _load_config_from_args(args)
 
-    node_name, guest_type, guest_id = _resolve_guest_target(config, args.vmname)
+    node_name, guest_type, guest_id, guest_name = _resolve_guest_target(config, args.vmname)
     node = config.nodes[node_name]
     command = "qm" if guest_type == "VM" else "pct"
+    _log_verbose(args, f"→ Target node: {node_name} ({node.host})")
+    _log_verbose(args, f"→ Executing: {command} {args.action} {guest_id}")
+    if args.debug:
+        _log_debug(
+            args,
+            f"→ Resolved guest: name={guest_name} id={guest_id} type={guest_type} node={node_name}",
+        )
+        ssh_cmd = _build_ssh_command(
+            node.host,
+            node.user,
+            node.port,
+            f"sudo -n {command} {args.action} {guest_id}",
+            identity_file=node.identity_file,
+            identities_only=node.identities_only,
+            ssh_options=node.ssh_options,
+        )
+        _log_debug(args, f"→ SSH: {_format_ssh_command(ssh_cmd)}")
     result = _run_ssh_sudo_command(
         node.host,
         node.user,
@@ -178,10 +243,21 @@ def _handle_vm_action(args: argparse.Namespace) -> int:
         ssh_options=node.ssh_options,
     )
     combined = (result.stdout or "") + (result.stderr or "")
+    _log_debug(args, f"→ stdout: {result.stdout or ''}")
+    _log_debug(args, f"→ stderr: {result.stderr or ''}")
 
     if result.returncode == 0:
         if result.stdout:
             print(result.stdout, end="")
+        verb_map = {
+            "start": "started",
+            "stop": "stopped",
+            "status": "status checked",
+            "shutdown": "shut down",
+            "reboot": "rebooted",
+        }
+        verb = verb_map.get(args.action, args.action)
+        print(f"OK: {guest_type} {guest_name} ({guest_id}) {verb} on {node_name}")
         return 0
 
     if _is_sudo_password_required(combined):
@@ -198,6 +274,15 @@ def _handle_vm_action(args: argparse.Namespace) -> int:
         if retry_code == 0:
             if retry_stdout:
                 print(retry_stdout, end="")
+            verb_map = {
+                "start": "started",
+                "stop": "stopped",
+                "status": "status checked",
+                "shutdown": "shut down",
+                "reboot": "rebooted",
+            }
+            verb = verb_map.get(args.action, args.action)
+            print(f"OK: {guest_type} {guest_name} ({guest_id}) {verb} on {node_name}")
         return retry_code
 
     _print_error(combined.strip() or "Remote command failed")
@@ -265,6 +350,19 @@ def _run_remote_command_with_askpass(
     command_label: str,
     emit_errors: bool = True,
 ) -> tuple[int, str, str]:
+    _log_verbose(args, f"→ Target node: {node_name} ({node.host})")
+    _log_verbose(args, f"→ Executing: {command}")
+    if args.debug:
+        ssh_cmd = _build_ssh_command(
+            node.host,
+            node.user,
+            node.port,
+            f"sudo -n {command}",
+            identity_file=node.identity_file,
+            identities_only=node.identities_only,
+            ssh_options=node.ssh_options,
+        )
+        _log_debug(args, f"→ SSH: {_format_ssh_command(ssh_cmd)}")
     result = _run_ssh_sudo_command(
         node.host,
         node.user,
@@ -275,6 +373,8 @@ def _run_remote_command_with_askpass(
         ssh_options=node.ssh_options,
     )
     combined = (result.stdout or "") + (result.stderr or "")
+    _log_debug(args, f"→ stdout: {result.stdout or ''}")
+    _log_debug(args, f"→ stderr: {result.stderr or ''}")
 
     if result.returncode == 0:
         return 0, result.stdout or "", ""
@@ -347,6 +447,51 @@ def _run_remote_pct_status(
         "pct",
         emit_errors=emit_errors,
     )
+
+
+def _confirm_node_action(node_name: str, action: str) -> bool:
+    action_label = "SHUT DOWN" if action == "shutdown" else "REBOOT"
+    print(f"You are about to {action_label} node '{node_name}'.")
+    print("This will gracefully stop ALL VMs and LXCs.")
+    print()
+    try:
+        confirmation = input(f"Type '{node_name}' to confirm: ")
+    except KeyboardInterrupt:
+        print()
+        return False
+    return confirmation == node_name
+
+
+def _handle_node_action(args: argparse.Namespace) -> int:
+    config = _load_config_from_args(args)
+    node = config.nodes.get(args.node)
+    if not node:
+        _print_error(f"Unknown node: {args.node}")
+        return EXIT_NOT_FOUND
+
+    if not _confirm_node_action(args.node, args.action):
+        _print_error("Aborted.")
+        return 1
+
+    command = f"/usr/sbin/pvesh create /nodes/{args.node}/status/{args.action}"
+    if args.debug:
+        _log_debug(
+            args,
+            f"→ Resolved node: name={args.node} host={node.host} user={node.user} port={node.port}",
+        )
+
+    exit_code, stdout, error = _run_remote_command_with_askpass(
+        args,
+        args.node,
+        node,
+        command,
+        "pvesh",
+    )
+    if exit_code != 0:
+        return exit_code
+    action_word = "shutdown" if args.action == "shutdown" else "reboot"
+    print(f"OK: {action_word} signal sent to node {args.node}")
+    return 0
 
 
 def _handle_list(args: argparse.Namespace) -> int:
@@ -485,13 +630,24 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--askpass",
         action=argparse.BooleanOptionalAction,
-        default=False,
-        help="Prompt for sudo password if needed (default: disabled)",
+        default=True,
+        help="Prompt for sudo password if needed (default: enabled)",
+    )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Show human-readable execution details",
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Show developer-level debug output (implies --verbose)",
     )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    for action in ("start", "stop", "status"):
+    for action in ("start", "stop", "status", "shutdown", "reboot"):
         sub = subparsers.add_parser(action, help=f"qm {action} <vmid>")
         sub.add_argument("vmname", help="Guest name or numeric ID")
         sub.set_defaults(func=_handle_vm_action, action=action)
@@ -520,6 +676,14 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     list_parser.set_defaults(func=_handle_list)
 
+    for action in ("shutdown", "reboot"):
+        node_action = subparsers.add_parser(
+            f"node-{action}",
+            help=f"{action.capitalize()} a node via Proxmox",
+        )
+        node_action.add_argument("node", help="Node name from config")
+        node_action.set_defaults(func=_handle_node_action, action=action)
+
     vm_parser = subparsers.add_parser("vm", help="VM-related actions")
     vm_sub = vm_parser.add_subparsers(dest="vm_command", required=True)
 
@@ -532,6 +696,8 @@ def _build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> None:
     parser = _build_parser()
     args = parser.parse_args(argv)
+    if args.debug:
+        args.verbose = True
     exit_code = args.func(args)
     raise SystemExit(exit_code)
 

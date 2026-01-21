@@ -35,12 +35,21 @@ Basic guest commands (VMs and LXCs are handled automatically):
 vmctl start webserver1
 vmctl stop webserver1
 vmctl status webserver1
+vmctl shutdown webserver1
+vmctl reboot webserver1
 ```
 
 You can also target guests by numeric ID:
 
 ```bash
 vmctl status 101
+```
+
+Node operations (explicit confirmation required):
+
+```bash
+vmctl node-shutdown prxmx1
+vmctl node-reboot prxmx1
 ```
 
 List all guests across all nodes:
@@ -119,14 +128,14 @@ Guest listing runs `qm list` and `pct list` together in a **single SSH session p
 ### Sudo authentication
 
 - By default, vmctl-ng tries `sudo -n` (non-interactive)
-- If `--askpass` is set and a password is required, it prompts interactively and retries
+- If a password is required, it prompts interactively and retries (disable with `--no-askpass`)
 - You get **up to 3 attempts per node**
 - Authentication is cached per node for the duration of the command
 
-To enable prompting:
+To disable prompting and fail immediately:
 
 ```bash
-vmctl --askpass list
+vmctl --no-askpass list
 ```
 
 ---

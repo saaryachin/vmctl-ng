@@ -473,7 +473,7 @@ def _handle_node_action(args: argparse.Namespace) -> int:
         _print_error("Aborted.")
         return 1
 
-    command = f"/usr/sbin/pvesh create /nodes/{args.node}/status/{args.action}"
+    command = f"/usr/bin/pvesh create /nodes/{args.node}/status -command {args.action}"
     if args.debug:
         _log_debug(
             args,

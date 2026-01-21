@@ -120,23 +120,23 @@ def _run_sudo_with_password_retry(
         password = getpass(f"Password for sudo on node '{node_name}' ({node.host}): ")
         ssh_cmd = _build_ssh_command(
             node.host,
-            node.user,
+            node.user.name,
             node.port,
             f"sudo -S -p '' {command}",
-            identity_file=node.identity_file,
-            identities_only=node.identities_only,
+            identity_file=node.user.identity_file,
+            identities_only=node.user.identities_only,
             ssh_options=node.ssh_options,
         )
         _log_debug(args, f"→ SSH: {_format_ssh_command(ssh_cmd)}")
         retry = _run_ssh_sudo_command(
             node.host,
-            node.user,
+            node.user.name,
             node.port,
             command,
             sudo_flags="-S -p ''",
             input_text=f"{password}\n",
-            identity_file=node.identity_file,
-            identities_only=node.identities_only,
+            identity_file=node.user.identity_file,
+            identities_only=node.user.identities_only,
             ssh_options=node.ssh_options,
         )
         password = ""
@@ -225,21 +225,21 @@ def _handle_vm_action(args: argparse.Namespace) -> int:
         )
         ssh_cmd = _build_ssh_command(
             node.host,
-            node.user,
+            node.user.name,
             node.port,
             f"sudo -n {command} {args.action} {guest_id}",
-            identity_file=node.identity_file,
-            identities_only=node.identities_only,
+            identity_file=node.user.identity_file,
+            identities_only=node.user.identities_only,
             ssh_options=node.ssh_options,
         )
         _log_debug(args, f"→ SSH: {_format_ssh_command(ssh_cmd)}")
     result = _run_ssh_sudo_command(
         node.host,
-        node.user,
+        node.user.name,
         node.port,
         f"{command} {args.action} {guest_id}",
-        identity_file=node.identity_file,
-        identities_only=node.identities_only,
+        identity_file=node.user.identity_file,
+        identities_only=node.user.identities_only,
         ssh_options=node.ssh_options,
     )
     combined = (result.stdout or "") + (result.stderr or "")
@@ -355,21 +355,21 @@ def _run_remote_command_with_askpass(
     if args.debug:
         ssh_cmd = _build_ssh_command(
             node.host,
-            node.user,
+            node.user.name,
             node.port,
             f"sudo -n {command}",
-            identity_file=node.identity_file,
-            identities_only=node.identities_only,
+            identity_file=node.user.identity_file,
+            identities_only=node.user.identities_only,
             ssh_options=node.ssh_options,
         )
         _log_debug(args, f"→ SSH: {_format_ssh_command(ssh_cmd)}")
     result = _run_ssh_sudo_command(
         node.host,
-        node.user,
+        node.user.name,
         node.port,
         command,
-        identity_file=node.identity_file,
-        identities_only=node.identities_only,
+        identity_file=node.user.identity_file,
+        identities_only=node.user.identities_only,
         ssh_options=node.ssh_options,
     )
     combined = (result.stdout or "") + (result.stderr or "")
@@ -477,7 +477,7 @@ def _handle_node_action(args: argparse.Namespace) -> int:
     if args.debug:
         _log_debug(
             args,
-            f"→ Resolved node: name={args.node} host={node.host} user={node.user} port={node.port}",
+            f"→ Resolved node: name={args.node} host={node.host} user={node.user.name} port={node.port}",
         )
 
     exit_code, stdout, error = _run_remote_command_with_askpass(

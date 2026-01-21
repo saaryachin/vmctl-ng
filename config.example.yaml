@@ -1,14 +1,26 @@
 defaults:
-  user: admin
-  port: 2222
-  identity_file: ~/.ssh/proxmox_ed25519
-  identities_only: true
-  ssh_options:
-    - StrictHostKeyChecking=no
-    - UserKnownHostsFile=/dev/null
+  port: 22
+
+  user:
+    name: vmctl
+    identity_file: ~/.ssh/vmctl-ed25519
+    identities_only: true
+
+  # Optional SSH options. Keep empty by default (safer).
+  ssh_options: []
+
 nodes:
   proxmoxsrv1:
     host: 192.168.1.100
+    # Optional per-node overrides:
+    # port: 2222
+    # user:
+    #   name: admin
+    #   identity_file: ~/.ssh/admin-ed25519
+    #   identities_only: true
+    # ssh_options:
+    #   - StrictHostKeyChecking=accept-new
+
     vms:
       webserver: 101
       fileserver: 102

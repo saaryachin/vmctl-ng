@@ -76,13 +76,12 @@ Example configuration (`config.example.yaml`):
 
 ```yaml
 defaults:
-  user: admin
-  port: 2222
-  identity_file: ~/.ssh/proxmox_ed25519
-  identities_only: true
-  ssh_options:
-    - StrictHostKeyChecking=no
-    - UserKnownHostsFile=/dev/null
+  port: 22
+  user:
+    name: vmctl
+    identity_file: ~/.ssh/vmctl_ed25519
+    identities_only: true
+  ssh_options: []
 nodes:
   prxmx1:
     host: 192.168.1.100
@@ -91,14 +90,21 @@ nodes:
       fileserver1: 102
     lxcs:
       jumpbox1: 103
+  prxmx2:
+    host: 192.168.1.101
+    user:
+      name: admin
+      identity_file: ~/.ssh/admin_ed25519
+      identities_only: true
 ```
 
 ### Notes
 
 - **Guest names must be unique across all nodes**
 - Guest **IDs should be unique** across VMs and LXCs if you want to target guests by numeric ID
-- `defaults` may include `user`, `port`, `identity_file`, `identities_only`, and `ssh_options`
-- `port` is optional (defaults to `22` if not set in defaults or per node)
+- `defaults.user` is required and contains `name`, `identity_file`, and `identities_only`
+- `defaults.port` is optional (defaults to `22` if omitted)
+- `defaults.ssh_options` is optional
 - `vms` and `lxcs` sections are optional — a node may have only one or the other
 
 ---

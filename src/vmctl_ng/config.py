@@ -21,11 +21,9 @@ DEFAULT_CONFIG_PATHS = [
 class NodeConfig:
     name: str
     host: str
-    user: str
+    user: "UserConfig"
     vms: dict[str, int]
     lxcs: dict[str, int]
-    identity_file: str | None
-    identities_only: bool
     ssh_options: list[str]
     port: int = 22
 
@@ -34,6 +32,21 @@ class NodeConfig:
 class Config:
     nodes: dict[str, NodeConfig]
     vm_index: dict[str, tuple[str, int]]
+    defaults: "DefaultsConfig"
+
+
+@dataclass(frozen=True)
+class UserConfig:
+    name: str
+    identity_file: str
+    identities_only: bool
+
+
+@dataclass(frozen=True)
+class DefaultsConfig:
+    port: int
+    user: UserConfig
+    ssh_options: list[str]
 
 
 def _require_mapping(value: Any, label: str) -> dict[str, Any]:
@@ -46,12 +59,6 @@ def _require_str(value: Any, label: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ConfigError(f"{label} must be a non-empty string")
     return value
-
-
-def _require_optional_str(value: Any, label: str) -> str | None:
-    if value is None:
-        return None
-    return _require_str(value, label)
 
 
 def _require_vms(value: Any, label: str) -> dict[str, int]:
@@ -97,6 +104,18 @@ def _require_ssh_options(value: Any, label: str) -> list[str]:
     return options
 
 
+def _require_user(value: Any, label: str) -> UserConfig:
+    user_map = _require_mapping(value, label)
+    name = _require_str(user_map.get("name"), f"{label}.name")
+    identity_file = _require_str(user_map.get("identity_file"), f"{label}.identity_file")
+    identities_only = _require_bool(user_map.get("identities_only"), f"{label}.identities_only")
+    return UserConfig(
+        name=name,
+        identity_file=str(Path(identity_file).expanduser()),
+        identities_only=identities_only,
+    )
+
+
 def find_config_path(override: str | None) -> Path:
     if override:
         path = Path(override).expanduser()
@@ -124,7 +143,25 @@ def load_config(path: Path) -> Config:
 
     root = _require_mapping(raw, "root")
     nodes_raw = _require_mapping(root.get("nodes"), "nodes")
-    defaults_raw = _require_mapping(root.get("defaults", {}), "defaults")
+    defaults_raw = _require_mapping(root.get("defaults"), "defaults")
+    if "identity_file" in defaults_raw or "identities_only" in defaults_raw:
+        raise ConfigError(
+            "defaults.identity_file and defaults.identities_only are not supported in v2; "
+            "use defaults.user"
+        )
+    defaults_user_raw = defaults_raw.get("user")
+    if defaults_user_raw is None:
+        raise ConfigError("defaults.user is required")
+    if not isinstance(defaults_user_raw, dict):
+        raise ConfigError("defaults.user must be a mapping with name/identity_file/identities_only")
+    defaults_user = _require_user(defaults_user_raw, "defaults.user")
+    defaults_port = _require_port(defaults_raw.get("port"), "defaults.port")
+    defaults_ssh_options = _require_ssh_options(defaults_raw.get("ssh_options"), "defaults.ssh_options")
+    defaults = DefaultsConfig(
+        port=defaults_port,
+        user=defaults_user,
+        ssh_options=defaults_ssh_options,
+    )
 
     nodes: dict[str, NodeConfig] = {}
     vm_index: dict[str, tuple[str, int]] = {}
@@ -133,25 +170,24 @@ def load_config(path: Path) -> Config:
         if not isinstance(node_name, str) or not node_name.strip():
             raise ConfigError("Node names must be non-empty strings")
         node_map = _require_mapping(node_data, f"nodes.{node_name}")
+        if "identity_file" in node_map or "identities_only" in node_map:
+            raise ConfigError(
+                f"nodes.{node_name} uses deprecated keys identity_file/identities_only; "
+                "use user.name/user.identity_file/user.identities_only"
+            )
         host = _require_str(node_map.get("host"), f"nodes.{node_name}.host")
-        user = _require_str(
-            node_map.get("user", defaults_raw.get("user")),
-            f"nodes.{node_name}.user",
-        )
-        port = _require_port(
-            node_map.get("port", defaults_raw.get("port")),
-            f"nodes.{node_name}.port",
-        )
-        identity_file = _require_optional_str(
-            node_map.get("identity_file", defaults_raw.get("identity_file")),
-            f"nodes.{node_name}.identity_file",
-        )
-        identities_only = _require_bool(
-            node_map.get("identities_only", defaults_raw.get("identities_only")),
-            f"nodes.{node_name}.identities_only",
-        )
+        user_block = node_map.get("user", defaults.user)
+        if isinstance(user_block, UserConfig):
+            user = user_block
+        else:
+            if not isinstance(user_block, dict):
+                raise ConfigError(
+                    f"nodes.{node_name}.user must be a mapping with name/identity_file/identities_only"
+                )
+            user = _require_user(user_block, f"nodes.{node_name}.user")
+        port = _require_port(node_map.get("port", defaults.port), f"nodes.{node_name}.port")
         ssh_options = _require_ssh_options(
-            node_map.get("ssh_options", defaults_raw.get("ssh_options")),
+            node_map.get("ssh_options", defaults.ssh_options),
             f"nodes.{node_name}.ssh_options",
         )
         vms = _require_vms(node_map.get("vms"), f"nodes.{node_name}.vms")
@@ -164,8 +200,6 @@ def load_config(path: Path) -> Config:
             port=port,
             vms=vms,
             lxcs=lxcs,
-            identity_file=identity_file,
-            identities_only=identities_only,
             ssh_options=ssh_options,
         )
         nodes[node_name] = node_cfg
@@ -181,4 +215,4 @@ def load_config(path: Path) -> Config:
     if not nodes:
         raise ConfigError("No nodes configured")
 
-    return Config(nodes=nodes, vm_index=vm_index)
+    return Config(nodes=nodes, vm_index=vm_index, defaults=defaults)
